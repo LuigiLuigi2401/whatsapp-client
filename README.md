@@ -81,12 +81,12 @@ Start the server:
 python run_server.py
 ```
 
-The server starts on `http://0.0.0.0:8000`.
+The server starts on `http://0.0.0.0:8080`.
 
 #### Accessing from Your Phone:
 1. **On Local Wi-Fi**:
    - Find your computer's local IP address (`ipconfig` on Windows or `ifconfig` on Linux/Mac, e.g. `192.168.1.15`).
-   - Open Safari or Chrome on your phone and go to: `http://192.168.1.15:8000`
+   - Open Safari or Chrome on your phone and go to: `http://192.168.1.15:8080`
 2. **Pair Your Phone**:
    - Tap **Link Your Phone** in the web interface.
    - Choose **QR Code** (scan with WhatsApp &rarr; Linked Devices &rarr; Link a Device), OR

@@ -46,7 +46,7 @@ class WhatsAppClient:
 
         self._status_listeners: List[Callable[[str, Dict[str, Any]], None]] = []
         self._qr_listeners: List[Callable[[str], None]] = []
-        self._state_lock = threading.Lock()
+        self._state_lock = threading.RLock()
         self._worker_thread: Optional[threading.Thread] = None
         self._stopping = threading.Event()
 
@@ -141,7 +141,10 @@ class WhatsAppClient:
             try:
                 # Render terminal QR code for CLI visibility
                 qr_obj = segno.make_qr(data_qr)
-                qr_obj.terminal(compact=True)
+                try:
+                    qr_obj.terminal(compact=True)
+                except Exception:
+                    pass  # Non-fatal if host terminal does not support unicode blocks
 
                 # Generate base64 PNG data URL for Web/PWA clients
                 buf = io.BytesIO()

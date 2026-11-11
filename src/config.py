@@ -13,7 +13,7 @@ SESSION_DB = os.getenv("WHATSAPP_SESSION_DB", str(DATA_DIR / "session.db"))
 
 # Server configuration
 HOST = os.getenv("HOST", "0.0.0.0")
-PORT = int(os.getenv("PORT", "8000"))
+PORT = int(os.getenv("PORT", "8080"))
 DEBUG = os.getenv("DEBUG", "false").lower() in ("true", "1", "yes")
 
 # Client display identification
