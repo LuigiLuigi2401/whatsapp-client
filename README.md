@@ -1,44 +1,45 @@
-# 📱 WhatsApp Lite Client
+# 💻 WhatsApp Lite Client (PC Desktop & Web)
 
-> A lightweight, resource-efficient WhatsApp Multi-Device client designed for mobile phones and low-spec environments. Say goodbye to the heavy, resource-draining official app without having to constantly re-login.
+> A lightweight, resource-efficient WhatsApp Multi-Device client designed for your **PC** to connect to WhatsApp without the heavy official desktop app (~800MB Electron) and without needing your phone to stay awake or connected.
 
 ---
 
-## 🌟 Why WhatsApp Lite?
+## 🌟 Why WhatsApp Lite for PC?
 
-The official WhatsApp mobile app runs continuous background sync services, heavy database indexing, and uncompressed media caches that frequently consume **500 MB – 1.2 GB of RAM** and drain battery life.
+The official WhatsApp Desktop app is an Electron app that consumes **600 MB – 1.2 GB of RAM**, and running WhatsApp Web in a browser tab is similarly memory-intensive. Moreover, legacy WhatsApp clients required your phone to remain constantly powered on and connected to the internet.
 
-**WhatsApp Lite** provides an alternative architecture using WhatsApp's native **Multi-Device Protocol**:
-- 🔑 **One-Time Pairing**: Pair once via QR Code or an 8-character phone pairing code. Credentials are encrypted and persisted locally in SQLite—**no repeated logins**.
-- 🪶 **Ultra-Featherweight**: Consumes under **35 MB of RAM** on your phone (runs inside the browser engine or standalone PWA).
-- 🔋 **Zero Idle Battery Consumption**: When the PWA is closed on your phone, background CPU/battery drain is 0%.
-- 📲 **Native App Feel**: Install as a **Progressive Web App (PWA)** to your iOS or Android home screen with dark mode and real-time WebSocket messaging.
-- 💻 **Cross-Platform & CLI**: Includes both a mobile-first Web interface and an interactive CLI for terminal enthusiasts.
+**WhatsApp Lite** connects your **PC directly to WhatsApp's Multi-Device network** as an independent companion client:
+- 💻 **Featherweight PC Desktop App**: Consumes only **~40 MB of RAM** with a native dark-mode GUI (`desktop_app.py`).
+- 🔋 **Zero Phone Drain**: After 1-time pairing, your phone does **not** need to remain online or awake. Your PC communicates with WhatsApp servers autonomously.
+- 🔑 **One-Time Pairing**: Pair once using an 8-character code or QR code. Credentials are saved locally in SQLite (`data/session.db`)—**no repeated logins**.
+- 🌐 **Web & Mobile Friendly**: Also includes a FastAPI web client (`run_server.py`) and a full terminal CLI (`cli.py`).
 
 ---
 
 ## 🏗️ Architecture
 
 ```mermaid
-flowchart TD
-    subgraph WhatsAppNetwork ["WhatsApp Network"]
+flowchart LR
+    subgraph WhatsAppCloud ["WhatsApp Cloud"]
         WA["WhatsApp Multi-Device Gateway"]
     end
 
-    subgraph HostServer ["Host Machine (PC / Raspberry Pi / VPS / Termux)"]
-        Core["WhatsAppClient Engine (Neonize / Whatsmeow)"]
-        DB[("SQLite Session (data/session.db)")]
-        API["FastAPI REST & WebSocket Gateway"]
-
-        Core <--> DB
-        Core <-->|"Noise Protocol (E2EE)"| WA
-        API <--> Core
+    subgraph PCClient ["Your PC (Windows / Linux / Mac)"]
+        direction TB
+        DB[("SQLite Session\ndata/session.db")]
+        Engine["WhatsAppClient Core Engine\n(Neonize / Whatsmeow)"]
+        
+        GUI["Option 1: Native PC GUI\n(desktop_app.py ~40MB RAM)"]
+        WebSrv["Option 2: Web Server\n(run_server.py -> localhost:8080)"]
+        CLI["Option 3: Terminal CLI\n(cli.py)"]
+        
+        Engine <--> DB
+        GUI <--> Engine
+        WebSrv <--> Engine
+        CLI <--> Engine
     end
 
-    subgraph MobileDevice ["Your Phone (iOS / Android)"]
-        PWA["Lightweight PWA / Web Client\n(~30MB RAM, 0% idle battery)"]
-        PWA <-->|"WebSocket / HTTP"| API
-    end
+    Engine <-->|"Noise Protocol (E2EE direct to servers)"| WA
 ```
 
 ---
@@ -72,40 +73,34 @@ pip install -r requirements.txt
 
 ---
 
-## 📲 How to Use
+## 📲 How to Use on Your PC
 
-### Option 1: Launch the Mobile Web / PWA Client (Recommended)
+### Option 1: Native PC Desktop App (Recommended)
 
-Start the server:
+Launch the native Windows/Linux dark-mode desktop GUI:
+
+```bash
+python desktop_app.py
+```
+
+- **Features**:
+  - Extremely light on memory (**~40 MB RAM** vs ~800 MB for official WhatsApp Desktop).
+  - Clean WhatsApp dark mode aesthetic with instant messaging.
+  - **One-Click Link**: Click **🔗 Link Device** in the toolbar to either scan the QR code or enter your phone number to get an 8-character pairing code.
+  - Once linked, the session is saved permanently in `data/session.db`. When you close and reopen the app, it reconnects automatically.
+  - **Your phone does NOT need to remain online or awake.**
+
+---
+
+### Option 2: Local Web Dashboard on PC / Browser
+
+If you prefer using your PC's browser (or accessing it from another device on your network):
+
 ```bash
 python run_server.py
 ```
 
-The server starts on `http://0.0.0.0:8080`.
-
-#### Accessing from Your Phone:
-1. **On Local Wi-Fi**:
-   - Find your computer's local IP address (`ipconfig` on Windows or `ifconfig` on Linux/Mac, e.g. `192.168.1.15`).
-   - Open Safari or Chrome on your phone and go to: `http://192.168.1.15:8080`
-2. **Pair Your Phone**:
-   - Tap **Link Your Phone** in the web interface.
-   - Choose **QR Code** (scan with WhatsApp &rarr; Linked Devices &rarr; Link a Device), OR
-   - Choose **Pairing Code** (enter your phone number, e.g., `+1234567890`, and type the 8-character code prompted on your phone).
-3. **Install to Home Screen (PWA)**:
-   - **iOS (Safari)**: Tap the **Share** button &rarr; **Add to Home Screen**.
-   - **Android (Chrome)**: Tap the three dots menu &rarr; **Install App** or **Add to Home Screen**.
-   - The app now launches in full-screen standalone mode just like a native app!
-
----
-
-### Option 2: Remote Access from Anywhere (Without Port Forwarding)
-
-To access your WhatsApp client outside your home Wi-Fi securely:
-
-- **Tailscale (Recommended)**:
-  Install [Tailscale](https://tailscale.com) on your host PC and phone. Access the web client securely using your host's 100.x.y.z Tailscale IP.
-- **Cloudflare Tunnel**:
-  Run `cloudflared tunnel --url http://localhost:8000` to get a free, secure HTTPS URL to open on your phone.
+Then open `http://localhost:8080` in your browser.
 
 ---
 
