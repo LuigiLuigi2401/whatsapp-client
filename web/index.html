@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#111b21" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="description" content="Ultra-lightweight WhatsApp Multi-Device client" />
+  <title>WhatsApp Lite</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="app-container">
+    <!-- Sidebar: Chats List -->
+    <aside class="sidebar">
+      <header class="sidebar-header">
+        <div class="app-branding">
+          <div class="brand-icon">WA</div>
+          <span class="header-title">WhatsApp Lite</span>
+          <span id="status-badge" class="status-badge disconnected">Disconnected</span>
+        </div>
+        <div class="header-actions">
+          <button class="icon-btn" onclick="openModal('new-chat-modal')" title="New Chat">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 5v14M5 12h14"></path>
+            </svg>
+          </button>
+          <button class="icon-btn" onclick="openModal('pair-modal')" title="Link Device">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7"></rect>
+              <rect x="14" y="3" width="7" height="7"></rect>
+              <rect x="14" y="14" width="7" height="7"></rect>
+              <rect x="3" y="14" width="7" height="7"></rect>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <ul id="chat-list" class="chat-list">
+        <!-- Chats injected dynamically -->
+      </ul>
+    </aside>
+
+    <!-- Main Screen: Active Chat -->
+    <main class="main-chat">
+      <header id="active-chat-header" class="chat-header" style="display: none;">
+        <button id="back-btn" class="icon-btn back-btn" title="Back to chats">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+        </button>
+        <div id="active-chat-avatar" class="chat-avatar" style="width: 38px; height: 38px; font-size: 1rem;">?</div>
+        <div class="chat-info">
+          <div id="active-chat-title" class="chat-name">Select a conversation</div>
+        </div>
+      </header>
+
+      <div id="empty-chat-state" class="empty-state">
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+        </svg>
+        <h2>WhatsApp Lite</h2>
+        <p>Send and receive messages with minimal device resource consumption.</p>
+        <button class="btn-primary" onclick="openModal('pair-modal')" style="margin-top: 10px; max-width: 200px;">
+          Link Your Phone
+        </button>
+      </div>
+
+      <div id="messages-container" class="messages-container" style="display: none;">
+        <!-- Message bubbles injected dynamically -->
+      </div>
+
+      <form id="chat-input-form" class="chat-input-bar" style="display: none;">
+        <input
+          id="message-input"
+          type="text"
+          class="chat-input"
+          placeholder="Type a message..."
+          autocomplete="off"
+        />
+        <button type="submit" class="send-btn" title="Send">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </form>
+    </main>
+  </div>
+
+  <!-- Modal: Link / Pair Device -->
+  <div id="pair-modal" class="modal-overlay">
+    <div class="modal-box">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3>Link WhatsApp Companion</h3>
+        <button class="icon-btn" onclick="closeModals()">&times;</button>
+      </div>
+
+      <div class="modal-tabs">
+        <button id="tab-btn-qr" class="tab-btn active" onclick="switchPairTab('qr')">QR Code</button>
+        <button id="tab-btn-code" class="tab-btn" onclick="switchPairTab('code')">Pairing Code</button>
+      </div>
+
+      <!-- Tab 1: QR Code -->
+      <div id="pair-tab-qr" class="qr-display">
+        <p style="font-size: 0.85rem; color: var(--text-secondary); text-align: center;">
+          Open WhatsApp on your phone &rarr; <b>Linked Devices</b> &rarr; <b>Link a Device</b> and point camera here.
+        </p>
+        <img id="qr-img" class="qr-image" style="display: none;" alt="WhatsApp QR Code" />
+        <div id="qr-loading" style="color: var(--text-secondary); padding: 40px;">
+          Waiting for QR code from WhatsApp gateway...
+        </div>
+      </div>
+
+      <!-- Tab 2: 8-digit Pairing Code -->
+      <div id="pair-tab-code" class="qr-display" style="display: none;">
+        <p style="font-size: 0.85rem; color: var(--text-secondary); text-align: center;">
+          Enter your phone number with country code to generate an 8-character pairing code without scanning.
+        </p>
+        <div class="form-group" style="width: 100%;">
+          <input
+            id="pair-phone-input"
+            type="tel"
+            class="form-input"
+            placeholder="e.g. +1234567890"
+          />
+        </div>
+        <button id="btn-request-pair-code" class="btn-primary" style="width: 100%;">
+          Get Pairing Code
+        </button>
+        <div id="pair-code-result" style="display: none; width: 100%; text-align: center; margin-top: 10px;">
+          <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 6px;">
+            Enter this code on your phone when prompted:
+          </p>
+          <div id="pair-code-display" class="code-display"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Start New Chat -->
+  <div id="new-chat-modal" class="modal-overlay">
+    <div class="modal-box">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3>Start New Conversation</h3>
+        <button class="icon-btn" onclick="closeModals()">&times;</button>
+      </div>
+      <div class="form-group">
+        <label style="font-size: 0.85rem; color: var(--text-secondary);">Phone number with country code:</label>
+        <input
+          id="new-chat-phone"
+          type="tel"
+          class="form-input"
+          placeholder="e.g. 15551234567"
+        />
+      </div>
+      <button id="btn-start-chat" class="btn-primary" style="width: 100%; margin-top: 8px;">
+        Open Chat
+      </button>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
