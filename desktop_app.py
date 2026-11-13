@@ -9,9 +9,13 @@ from src import compat  # noqa: F401 - Python <= 3.10 typing.Self patch
 
 import io
 import logging
+import os
+import subprocess
+import sys
 import threading
 import time
 from datetime import datetime
+from tkinter import filedialog
 from typing import Any, Dict, Optional
 
 import customtkinter as ctk
@@ -209,6 +213,8 @@ class WhatsAppDesktopApp(ctk.CTk):
         self.active_chat_title: str = ""
         self.chat_buttons: Dict[str, ctk.CTkButton] = {}
         self.pair_dialog: Optional[PairDialog] = None
+        self._image_cache: Dict[str, ctk.CTkImage] = {}
+        self.bubble_placeholders: Dict[str, Any] = {}
 
         self._setup_layout()
         self._setup_client_events()
@@ -304,7 +310,22 @@ class WhatsAppDesktopApp(ctk.CTk):
         # Chat Input Bar
         self.input_frame = ctk.CTkFrame(self.main_chat_frame, height=56, fg_color="#202c33", corner_radius=0)
         self.input_frame.grid(row=2, column=0, sticky="ew")
-        self.input_frame.grid_columnconfigure(0, weight=1)
+        self.input_frame.grid_columnconfigure(0, weight=0)
+        self.input_frame.grid_columnconfigure(1, weight=1)
+        self.input_frame.grid_columnconfigure(2, weight=0)
+
+        # Attachment button for sending images & stickers
+        self.attach_btn = ctk.CTkButton(
+            self.input_frame,
+            text="📎",
+            command=self._pick_and_send_media,
+            width=38,
+            height=38,
+            fg_color="#2a3942",
+            hover_color="#374248",
+            font=("Segoe UI", 16),
+        )
+        self.attach_btn.grid(row=0, column=0, padx=(10, 4), pady=10)
 
         self.message_entry = ctk.CTkEntry(
             self.input_frame,
@@ -314,7 +335,7 @@ class WhatsAppDesktopApp(ctk.CTk):
             height=38,
             font=("Segoe UI", 13),
         )
-        self.message_entry.grid(row=0, column=0, padx=(12, 8), pady=10, sticky="ew")
+        self.message_entry.grid(row=0, column=1, padx=(4, 8), pady=10, sticky="ew")
         self.message_entry.bind("<Return>", lambda e: self._send_message())
 
         self.send_btn = ctk.CTkButton(
@@ -326,12 +347,13 @@ class WhatsAppDesktopApp(ctk.CTk):
             fg_color="#00a884",
             hover_color="#008f6f",
         )
-        self.send_btn.grid(row=0, column=1, padx=(0, 12), pady=10)
+        self.send_btn.grid(row=0, column=2, padx=(0, 12), pady=10)
 
     def _setup_client_events(self):
         self.client.add_status_listener(lambda status, state: self.after(0, self._on_status_change, status, state))
         self.client.add_qr_listener(lambda qr_b64: self.after(0, self._on_qr_received))
         self.client.store.add_listener(lambda msg: self.after(0, self._on_message_received, msg))
+        self.client.store.add_update_listener(lambda msg: self.after(0, self._on_message_updated, msg))
 
     def _on_status_change(self, status: str, state: Dict[str, Any]):
         if state.get("me_phone"):
@@ -351,16 +373,56 @@ class WhatsAppDesktopApp(ctk.CTk):
 
     def _on_message_received(self, msg: ChatMessage):
         # Update or create button in sidebar
-        self._update_chat_item(msg.chat_jid, msg.sender_name, msg.text, msg.timestamp)
+        preview = msg.text or msg.caption or (f"[{msg.media_type.capitalize()}]" if msg.media_type else "")
+        self._update_chat_item(msg.chat_jid, msg.sender_name, preview, msg.timestamp)
 
         # If currently open, render bubble
         if self.active_chat_jid == msg.chat_jid:
             self._append_message_bubble(msg)
 
+    def _on_message_updated(self, msg: ChatMessage):
+        # Update preview in sidebar
+        preview = msg.text or msg.caption or (f"[{msg.media_type.capitalize()}]" if msg.media_type else "")
+        self._update_chat_item(msg.chat_jid, msg.sender_name, preview, msg.timestamp)
+
+        # If currently open and message has a placeholder waiting:
+        if self.active_chat_jid == msg.chat_jid and msg.id in self.bubble_placeholders:
+            bubble, _ = self.bubble_placeholders.pop(msg.id)
+            if bubble.winfo_exists():
+                # Clear placeholder widgets inside bubble
+                for widget in bubble.winfo_children():
+                    widget.destroy()
+
+                # Re-render group sender if applicable
+                if not msg.is_from_me and msg.is_group and msg.media_type != "sticker":
+                    sender_lbl = ctk.CTkLabel(
+                        bubble,
+                        text=msg.sender_name,
+                        font=("Segoe UI", 10, "bold"),
+                        text_color="#00a884",
+                    )
+                    sender_lbl.pack(anchor="w", padx=10, pady=(4, 0))
+
+                # Re-render media
+                self._render_media_content(bubble, msg)
+
+                # Re-render timestamp
+                time_str = format_time_safe(msg.timestamp)
+                time_lbl = ctk.CTkLabel(
+                    bubble,
+                    text=time_str,
+                    font=("Segoe UI", 9),
+                    text_color="gray70",
+                )
+                time_lbl.pack(padx=10, pady=(0, 4), anchor="e")
+
+                self.messages_frame._parent_canvas.yview_moveto(1.0)
+
     def _update_chat_item(self, chat_jid: str, title: str, preview: str, timestamp: int):
         clean_title = title or chat_jid.split("@")[0]
         time_str = format_time_safe(timestamp)
-        btn_text = f"{clean_title}  ({time_str})\n{preview[:28]}..."
+        clean_preview = preview or "Media"
+        btn_text = f"{clean_title}  ({time_str})\n{clean_preview[:28]}..."
 
         if chat_jid in self.chat_buttons:
             self.chat_buttons[chat_jid].configure(text=btn_text)
@@ -382,6 +444,8 @@ class WhatsAppDesktopApp(ctk.CTk):
         self.active_chat_jid = chat_jid
         self.active_chat_title = title
         self.chat_title_label.configure(text=title)
+        self.bubble_placeholders.clear()
+        self._image_cache.clear()
 
         # Clear existing messages
         for widget in self.messages_frame.winfo_children():
@@ -395,12 +459,146 @@ class WhatsAppDesktopApp(ctk.CTk):
 
         self.message_entry.focus()
 
+    def _open_media_file(self, filepath: Optional[str]):
+        """Open the media file in the OS default viewer."""
+        if not filepath:
+            return
+        abs_path = os.path.abspath(filepath)
+        if not os.path.exists(abs_path):
+            return
+        try:
+            if hasattr(os, "startfile"):
+                os.startfile(abs_path)
+            elif sys.platform == "darwin":
+                subprocess.run(["open", abs_path], check=False)
+            else:
+                subprocess.run(["xdg-open", abs_path], check=False)
+        except Exception as e:
+            log.warning("Could not launch default viewer for %s: %s", abs_path, e)
+
+    def _render_media_content(self, bubble: ctk.CTkFrame, msg: ChatMessage):
+        """Renders media (sticker, image, document, etc.) into the bubble frame."""
+        has_media_file = bool(msg.media_path and os.path.exists(msg.media_path) and os.path.getsize(msg.media_path) > 0)
+
+        if msg.media_type == "sticker":
+            if has_media_file:
+                try:
+                    pil_img = Image.open(msg.media_path)
+                    if pil_img.mode != "RGBA":
+                        pil_img = pil_img.convert("RGBA")
+
+                    orig_w, orig_h = pil_img.size
+                    max_dim = 160
+                    scale = min(max_dim / max(orig_w, 1), max_dim / max(orig_h, 1))
+                    target_w = max(1, int(orig_w * scale))
+                    target_h = max(1, int(orig_h * scale))
+
+                    ctk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(target_w, target_h))
+                    self._image_cache[msg.id] = ctk_img
+
+                    sticker_lbl = ctk.CTkLabel(bubble, image=ctk_img, text="", cursor="hand2")
+                    sticker_lbl.image = ctk_img
+                    sticker_lbl.pack(padx=4, pady=4)
+                    sticker_lbl.bind("<Button-1>", lambda e, p=msg.media_path: self._open_media_file(p))
+                    return
+                except Exception as e:
+                    log.warning("Failed to render sticker %s: %s", msg.media_path, e)
+
+            # Placeholder if not downloaded yet
+            placeholder = ctk.CTkLabel(
+                bubble,
+                text="🎨 [Sticker - Downloading...]",
+                font=("Segoe UI", 11, "italic"),
+                text_color="#8696a0",
+            )
+            placeholder.pack(padx=12, pady=8)
+            self.bubble_placeholders[msg.id] = (bubble, msg)
+
+        elif msg.media_type == "image":
+            if has_media_file:
+                try:
+                    pil_img = Image.open(msg.media_path)
+                    if pil_img.mode not in ("RGB", "RGBA"):
+                        pil_img = pil_img.convert("RGB")
+
+                    orig_w, orig_h = pil_img.size
+                    max_w, max_h = 300, 300
+                    scale = min(max_w / max(orig_w, 1), max_h / max(orig_h, 1))
+                    target_w = max(1, int(orig_w * scale))
+                    target_h = max(1, int(orig_h * scale))
+
+                    ctk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(target_w, target_h))
+                    self._image_cache[msg.id] = ctk_img
+
+                    img_lbl = ctk.CTkLabel(bubble, image=ctk_img, text="", cursor="hand2")
+                    img_lbl.image = ctk_img
+                    img_lbl.pack(padx=6, pady=(6, 2))
+                    img_lbl.bind("<Button-1>", lambda e, p=msg.media_path: self._open_media_file(p))
+
+                    caption_text = msg.caption or (msg.text if msg.text != "[Image]" else "")
+                    if caption_text:
+                        cap_lbl = ctk.CTkLabel(
+                            bubble,
+                            text=caption_text,
+                            font=("Segoe UI", 12),
+                            wraplength=280,
+                            justify="left",
+                            anchor="w",
+                        )
+                        cap_lbl.pack(padx=10, pady=(2, 4), anchor="w")
+                    return
+                except Exception as e:
+                    log.warning("Failed to render image %s: %s", msg.media_path, e)
+
+            # Placeholder if not downloaded yet
+            caption_text = msg.caption or (msg.text if msg.text != "[Image]" else "")
+            placeholder_text = "📷 [Image - Downloading...]"
+            if caption_text:
+                placeholder_text += f"\n{caption_text}"
+            placeholder = ctk.CTkLabel(
+                bubble,
+                text=placeholder_text,
+                font=("Segoe UI", 11, "italic"),
+                text_color="#8696a0",
+                wraplength=280,
+                justify="left",
+            )
+            placeholder.pack(padx=12, pady=8)
+            self.bubble_placeholders[msg.id] = (bubble, msg)
+
+        elif msg.media_type == "document":
+            doc_name = msg.media_filename or msg.text or "Document"
+            doc_btn = ctk.CTkButton(
+                bubble,
+                text=f"📄 {doc_name[:24]}",
+                font=("Segoe UI", 11, "underline"),
+                fg_color="transparent",
+                hover_color="#182229",
+                anchor="w",
+                command=lambda p=msg.media_path: self._open_media_file(p) if p else None,
+            )
+            doc_btn.pack(padx=8, pady=4)
+
+        elif msg.media_type in ("video", "audio"):
+            icon = "🎬" if msg.media_type == "video" else "🎵"
+            label = f"{icon} [{msg.media_type.capitalize()}]"
+            btn = ctk.CTkButton(
+                bubble,
+                text=label,
+                font=("Segoe UI", 11),
+                fg_color="transparent",
+                hover_color="#182229",
+                command=lambda p=msg.media_path: self._open_media_file(p) if p else None,
+            )
+            btn.pack(padx=8, pady=4)
+
     def _append_message_bubble(self, msg: ChatMessage):
         is_out = msg.is_from_me
         time_str = format_time_safe(msg.timestamp)
 
-        bubble_fg = "#005c4b" if is_out else "#202c33"
-        align = "e" if is_out else "w"
+        # Stickers render with transparent bubble for a natural sticker look
+        is_sticker = msg.media_type == "sticker"
+        bubble_fg = "transparent" if is_sticker else ("#005c4b" if is_out else "#202c33")
 
         container = ctk.CTkFrame(self.messages_frame, fg_color="transparent")
         container.pack(fill="x", pady=4, padx=6)
@@ -408,7 +606,7 @@ class WhatsAppDesktopApp(ctk.CTk):
         bubble = ctk.CTkFrame(container, fg_color=bubble_fg, corner_radius=10)
         bubble.pack(side="right" if is_out else "left", padx=4)
 
-        if not is_out and msg.is_group:
+        if not is_out and msg.is_group and not is_sticker:
             sender_lbl = ctk.CTkLabel(
                 bubble,
                 text=msg.sender_name,
@@ -417,15 +615,18 @@ class WhatsAppDesktopApp(ctk.CTk):
             )
             sender_lbl.pack(anchor="w", padx=10, pady=(4, 0))
 
-        text_lbl = ctk.CTkLabel(
-            bubble,
-            text=msg.text,
-            font=("Segoe UI", 12),
-            wraplength=480,
-            justify="left",
-            anchor="w",
-        )
-        text_lbl.pack(padx=10, pady=(4, 2), anchor="w")
+        if msg.media_type:
+            self._render_media_content(bubble, msg)
+        else:
+            text_lbl = ctk.CTkLabel(
+                bubble,
+                text=msg.text,
+                font=("Segoe UI", 12),
+                wraplength=480,
+                justify="left",
+                anchor="w",
+            )
+            text_lbl.pack(padx=10, pady=(4, 2), anchor="w")
 
         time_lbl = ctk.CTkLabel(
             bubble,
@@ -451,6 +652,34 @@ class WhatsAppDesktopApp(ctk.CTk):
                 self.client.send_text_message(target_jid, text)
             except Exception as e:
                 log.exception("Error sending message from PC GUI: %s", e)
+
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _pick_and_send_media(self):
+        """Pick an image, sticker, or media file and send it to the active chat."""
+        if not self.active_chat_jid:
+            return
+        file_path = filedialog.askopenfilename(
+            title="Select Image or Sticker to Send",
+            filetypes=[
+                ("Images & Stickers", "*.jpg;*.jpeg;*.png;*.webp;*.gif"),
+                ("All Files", "*.*"),
+            ],
+        )
+        if not file_path:
+            return
+
+        target_jid = self.active_chat_jid
+        is_sticker = file_path.lower().endswith(".webp")
+
+        def _do():
+            try:
+                if is_sticker:
+                    self.client.send_sticker(target_jid, file_path)
+                else:
+                    self.client.send_image(target_jid, file_path)
+            except Exception as e:
+                log.exception("Error sending media from PC GUI: %s", e)
 
         threading.Thread(target=_do, daemon=True).start()
 

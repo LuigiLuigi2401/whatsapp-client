@@ -7,6 +7,8 @@ import io
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import segno
@@ -20,6 +22,7 @@ from neonize.events import (
 )
 from neonize.utils.jid import Jid2String, build_jid
 
+from .config import MEDIA_DIR
 from .handlers import ChatMessage, MessageStore, parse_incoming_message
 
 log = logging.getLogger("whatsapp_client.core")
@@ -49,6 +52,7 @@ class WhatsAppClient:
         self._state_lock = threading.RLock()
         self._worker_thread: Optional[threading.Thread] = None
         self._stopping = threading.Event()
+        self._media_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="WAMediaWorker")
 
         # Initialize underlying whatsmeow/neonize client
         self._client: NewClient = NewClient(self.session_path)
@@ -212,10 +216,52 @@ class WhatsAppClient:
 
         @self._client.event(MessageEv)
         def on_message(client: NewClient, event: MessageEv):
-            parsed = parse_incoming_message(event)
+            parsed, unwrapped = parse_incoming_message(event)
             if parsed:
                 log.info("Incoming message from %s: %s", parsed.sender_name or parsed.sender_jid, parsed.text)
                 self.store.add_message(parsed)
+                if unwrapped and parsed.media_type and parsed.media_filename:
+                    self._schedule_media_download(unwrapped, parsed, event.Message)
+
+    def _schedule_media_download(self, unwrapped: Any, parsed: ChatMessage, original_msg: Optional[Any] = None) -> None:
+        """Download image, sticker, or media file in a background thread."""
+        if self._stopping.is_set():
+            return
+
+        def _task():
+            try:
+                target_path = MEDIA_DIR / parsed.media_filename
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                log.info("Downloading media (%s) for message %s...", parsed.media_type, parsed.id)
+
+                # Attempt 1: Download using unwrapped protobuf
+                success = False
+                try:
+                    self._client.download_any(unwrapped, path=str(target_path))
+                    if target_path.exists() and target_path.stat().st_size > 0:
+                        success = True
+                except Exception as e1:
+                    log.debug("Unwrapped download attempt failed: %s", e1)
+
+                # Attempt 2: Fallback to original message if unwrapped failed
+                if not success and original_msg is not None:
+                    try:
+                        self._client.download_any(original_msg, path=str(target_path))
+                        if target_path.exists() and target_path.stat().st_size > 0:
+                            success = True
+                    except Exception as e2:
+                        log.debug("Original message download attempt failed: %s", e2)
+
+                if success and target_path.exists() and target_path.stat().st_size > 0:
+                    log.info("Successfully downloaded %s (%d bytes) to %s", parsed.media_type, target_path.stat().st_size, target_path.name)
+                    parsed.media_path = str(target_path)
+                    self.store.update_message(parsed)
+                else:
+                    log.warning("Media download for %s yielded 0 bytes or failed.", parsed.id)
+            except Exception as e:
+                log.warning("Media download error for %s: %s", parsed.id, e)
+
+        self._media_executor.submit(_task)
 
     def request_pairing_code(self, phone_number: str) -> str:
         """Request an 8-character pairing code for login without scanning QR."""
@@ -248,6 +294,55 @@ class WhatsAppClient:
         self.store.add_message(msg)
         return msg
 
+    def send_image(self, to: str, file_path: str, caption: str = "") -> ChatMessage:
+        """Send an image to a contact or group."""
+        clean_to = to.strip().replace("+", "").replace("-", "").replace(" ", "")
+        log.info("Sending image to %s: %s", clean_to, file_path)
+        self._client.send_image(clean_to, file_path, caption=caption if caption else None)
+
+        target_jid = clean_to if "@" in clean_to else f"{clean_to}@s.whatsapp.net"
+        path_obj = Path(file_path).resolve()
+        msg = ChatMessage(
+            id=f"out_img_{int(time.time() * 1000)}",
+            chat_jid=target_jid,
+            sender_jid=self._me_jid or "me",
+            sender_name="Me",
+            text=caption if caption else "[Image]",
+            timestamp=int(time.time()),
+            is_from_me=True,
+            is_group="@g.us" in target_jid,
+            media_type="image",
+            media_path=str(path_obj),
+            media_filename=path_obj.name,
+            caption=caption,
+        )
+        self.store.add_message(msg)
+        return msg
+
+    def send_sticker(self, to: str, file_path: str) -> ChatMessage:
+        """Send a sticker to a contact or group."""
+        clean_to = to.strip().replace("+", "").replace("-", "").replace(" ", "")
+        log.info("Sending sticker to %s: %s", clean_to, file_path)
+        self._client.send_sticker(clean_to, file_path)
+
+        target_jid = clean_to if "@" in clean_to else f"{clean_to}@s.whatsapp.net"
+        path_obj = Path(file_path).resolve()
+        msg = ChatMessage(
+            id=f"out_stk_{int(time.time() * 1000)}",
+            chat_jid=target_jid,
+            sender_jid=self._me_jid or "me",
+            sender_name="Me",
+            text="[Sticker]",
+            timestamp=int(time.time()),
+            is_from_me=True,
+            is_group="@g.us" in target_jid,
+            media_type="sticker",
+            media_path=str(path_obj),
+            media_filename=path_obj.name,
+        )
+        self.store.add_message(msg)
+        return msg
+
     def start(self) -> None:
         """Start the client connection in a background thread."""
         if self._worker_thread and self._worker_thread.is_alive():
@@ -276,6 +371,10 @@ class WhatsAppClient:
         """Gracefully disconnect and stop the client worker."""
         self._stopping.set()
         log.info("Stopping WhatsApp client...")
+        try:
+            self._media_executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
         try:
             self._client.disconnect()
         except Exception:

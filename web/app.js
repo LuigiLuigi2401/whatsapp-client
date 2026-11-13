@@ -83,6 +83,9 @@ function handleWsMessage(payload) {
     case 'new_message':
       handleNewMessage(payload.message);
       break;
+    case 'message_updated':
+      handleMessageUpdated(payload.message);
+      break;
   }
 }
 
@@ -206,18 +209,78 @@ function handleNewMessage(msg) {
   }
 }
 
+function handleMessageUpdated(msg) {
+  let chat = chatsMap.get(msg.chat_jid);
+  if (chat) {
+    chat.last_message = msg.text || msg.caption || `[${msg.media_type}]`;
+    chat.last_timestamp = msg.timestamp;
+    renderChatList();
+  }
+
+  if (currentChatJid === msg.chat_jid) {
+    const existingBubble = messagesContainer.querySelector(`[data-msg-id="${msg.id}"]`);
+    if (existingBubble) {
+      const isOut = msg.is_from_me;
+      const isSticker = msg.media_type === 'sticker';
+      existingBubble.className = `message-bubble ${isOut ? 'outgoing' : 'incoming'}${isSticker ? ' sticker-bubble' : ''}`;
+      existingBubble.innerHTML = buildBubbleContent(msg);
+      scrollToBottom();
+    }
+  }
+}
+
+function buildBubbleContent(msg) {
+  const isOut = msg.is_from_me;
+  const isSticker = msg.media_type === 'sticker';
+  const timeStr = formatTime(msg.timestamp);
+
+  let senderHtml = (!isOut && msg.is_group && !isSticker)
+    ? `<span class="message-sender">${escapeHtml(msg.sender_name)}</span>`
+    : '';
+
+  let bodyHtml = '';
+  if (msg.media_type === 'sticker') {
+    if (msg.media_url) {
+      bodyHtml = `<img class="bubble-sticker" src="${msg.media_url}" alt="Sticker" loading="lazy" />`;
+    } else {
+      bodyHtml = `<span class="message-text">🎨 [Sticker - Downloading...]</span>`;
+    }
+  } else if (msg.media_type === 'image') {
+    if (msg.media_url) {
+      const captionText = msg.caption || (msg.text !== '[Image]' ? msg.text : '');
+      bodyHtml = `
+        <div class="bubble-image-container">
+          <a href="${msg.media_url}" target="_blank">
+            <img class="bubble-image" src="${msg.media_url}" alt="Image" loading="lazy" />
+          </a>
+          ${captionText ? `<span class="message-text">${escapeHtml(captionText)}</span>` : ''}
+        </div>
+      `;
+    } else {
+      bodyHtml = `<span class="message-text">📷 [Image - Downloading...]</span>`;
+    }
+  } else if (msg.media_type === 'document') {
+    const docName = msg.media_filename || msg.text || 'Document';
+    bodyHtml = `<a class="bubble-doc" href="${msg.media_url || '#'}" target="_blank" download>📄 ${escapeHtml(docName)}</a>`;
+  } else {
+    bodyHtml = `<span class="message-text">${escapeHtml(msg.text)}</span>`;
+  }
+
+  return `
+    ${senderHtml}
+    ${bodyHtml}
+    <span class="message-time">${timeStr}</span>
+  `;
+}
+
 function appendMessageBubble(msg, shouldScroll = true) {
   const div = document.createElement('div');
   const isOut = msg.is_from_me;
-  div.className = `message-bubble ${isOut ? 'outgoing' : 'incoming'}`;
+  const isSticker = msg.media_type === 'sticker';
+  div.className = `message-bubble ${isOut ? 'outgoing' : 'incoming'}${isSticker ? ' sticker-bubble' : ''}`;
+  div.setAttribute('data-msg-id', msg.id);
 
-  const timeStr = formatTime(msg.timestamp);
-
-  div.innerHTML = `
-    ${!isOut && msg.is_group ? `<span class="message-sender">${escapeHtml(msg.sender_name)}</span>` : ''}
-    <span class="message-text">${escapeHtml(msg.text)}</span>
-    <span class="message-time">${timeStr}</span>
-  `;
+  div.innerHTML = buildBubbleContent(msg);
 
   messagesContainer.appendChild(div);
   if (shouldScroll) {

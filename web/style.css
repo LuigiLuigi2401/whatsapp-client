@@ -266,6 +266,45 @@ body {
   margin-top: 4px;
 }
 
+.message-bubble.sticker-bubble {
+  background-color: transparent !important;
+  padding: 2px !important;
+  box-shadow: none !important;
+}
+
+.bubble-sticker {
+  max-width: 150px;
+  max-height: 150px;
+  object-fit: contain;
+  display: block;
+}
+
+.bubble-image-container {
+  display: flex;
+  flex-direction: column;
+}
+
+.bubble-image {
+  max-width: 280px;
+  max-height: 280px;
+  border-radius: 6px;
+  object-fit: cover;
+  display: block;
+  cursor: pointer;
+}
+
+.bubble-doc {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 500;
+  display: inline-block;
+  padding: 4px 0;
+}
+
+.bubble-doc:hover {
+  text-decoration: underline;
+}
+
 /* Input Area */
 .chat-input-bar {
   background-color: var(--bg-header);

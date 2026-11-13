@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .client import WhatsAppClient
-from .config import BASE_DIR, CLIENT_NAME, SESSION_DB
+from .config import BASE_DIR, CLIENT_NAME, MEDIA_DIR, SESSION_DB
 from .handlers import ChatMessage
 
 log = logging.getLogger("whatsapp_client.server")
@@ -59,6 +59,15 @@ def on_client_message(msg: ChatMessage):
         )
 
 
+def on_client_message_updated(msg: ChatMessage):
+    """Callback triggered when a message is updated (e.g. media downloaded)."""
+    if event_loop and event_loop.is_running():
+        asyncio.run_coroutine_threadsafe(
+            broadcast_ws({"type": "message_updated", "message": msg.to_dict()}),
+            event_loop,
+        )
+
+
 def on_client_status(new_status: str, state: Dict[str, Any]):
     """Callback triggered from WhatsApp worker thread when connection status changes."""
     if event_loop and event_loop.is_running():
@@ -79,6 +88,7 @@ def on_client_qr(qr_b64: str):
 
 # Hook up callbacks
 client.store.add_listener(on_client_message)
+client.store.add_update_listener(on_client_message_updated)
 client.add_status_listener(on_client_status)
 client.add_qr_listener(on_client_qr)
 
@@ -200,6 +210,10 @@ async def websocket_endpoint(websocket: WebSocket):
         log.warning("WebSocket error: %s", e)
         active_connections.discard(websocket)
 
+
+# Mount media directory for attachments and stickers
+if MEDIA_DIR.exists():
+    app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")
 
 # Mount static assets for mobile PWA
 web_dir = BASE_DIR / "web"
