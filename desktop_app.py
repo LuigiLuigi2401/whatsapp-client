@@ -34,6 +34,23 @@ ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("green")
 
 
+def format_time_safe(ts: Any) -> str:
+    """Safely formats any unix timestamp (seconds or milliseconds), avoiding Windows OSError."""
+    if not ts:
+        return ""
+    try:
+        val = int(ts)
+        if val > 1e14:
+            val = int(val / 1e6)
+        elif val > 1e11:
+            val = int(val / 1e3)
+        if val <= 0 or val > 253402300799:
+            return ""
+        return datetime.fromtimestamp(val).strftime("%H:%M")
+    except Exception:
+        return ""
+
+
 class PairDialog(ctk.CTkToplevel):
     """Dialog for pairing PC client with phone via QR code or 8-digit code."""
 
@@ -342,7 +359,7 @@ class WhatsAppDesktopApp(ctk.CTk):
 
     def _update_chat_item(self, chat_jid: str, title: str, preview: str, timestamp: int):
         clean_title = title or chat_jid.split("@")[0]
-        time_str = datetime.fromtimestamp(timestamp).strftime("%H:%M") if timestamp else ""
+        time_str = format_time_safe(timestamp)
         btn_text = f"{clean_title}  ({time_str})\n{preview[:28]}..."
 
         if chat_jid in self.chat_buttons:
@@ -380,7 +397,7 @@ class WhatsAppDesktopApp(ctk.CTk):
 
     def _append_message_bubble(self, msg: ChatMessage):
         is_out = msg.is_from_me
-        time_str = datetime.fromtimestamp(msg.timestamp).strftime("%H:%M") if msg.timestamp else ""
+        time_str = format_time_safe(msg.timestamp)
 
         bubble_fg = "#005c4b" if is_out else "#202c33"
         align = "e" if is_out else "w"

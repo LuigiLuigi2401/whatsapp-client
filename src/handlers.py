@@ -90,35 +90,68 @@ class MessageStore:
         return summaries
 
 
+def normalize_timestamp(raw_ts: Any) -> int:
+    """Safely convert any WhatsApp timestamp (seconds, milliseconds, or microseconds) to unix seconds."""
+    try:
+        ts = int(raw_ts)
+        if ts > 1e14:  # microseconds / nanoseconds
+            ts = int(ts / 1e6)
+        elif ts > 1e11:  # milliseconds (13-digits, standard in WA history sync)
+            ts = int(ts / 1e3)
+        if ts <= 0 or ts > 253402300799:  # sanity check (year 9999 limit)
+            return int(time.time())
+        return ts
+    except Exception:
+        return int(time.time())
+
+
 def parse_incoming_message(msg: MessageEv) -> Optional[ChatMessage]:
     """Parse a neonize MessageEv protobuf into a ChatMessage dataclass."""
     try:
-        text = extract_text(msg.Message)
+        raw_msg = msg.Message
+
+        # Filter out internal WhatsApp encryption and protocol packets
+        if raw_msg.senderKeyDistributionMessage.ListFields():
+            return None
+        if raw_msg.fastRatchetKeySenderKeyDistributionMessage.ListFields():
+            return None
+        if raw_msg.protocolMessage.ListFields():
+            return None
+
+        # Handle reactions
+        if raw_msg.reactionMessage.ListFields():
+            text = f"Reacted {raw_msg.reactionMessage.text}"
+        else:
+            text = extract_text(raw_msg)
+
         if not text:
             # Check if it is an attachment without caption
-            if msg.Message.imageMessage.ListFields():
+            if raw_msg.imageMessage.ListFields():
                 text = "[Image]"
-            elif msg.Message.videoMessage.ListFields():
+            elif raw_msg.videoMessage.ListFields():
                 text = "[Video]"
-            elif msg.Message.audioMessage.ListFields():
+            elif raw_msg.audioMessage.ListFields():
                 text = "[Audio Message]"
-            elif msg.Message.documentMessage.ListFields():
-                text = f"[Document: {msg.Message.documentMessage.fileName or 'file'}]"
-            elif msg.Message.stickerMessage.ListFields():
+            elif raw_msg.documentMessage.ListFields():
+                text = f"[Document: {raw_msg.documentMessage.fileName or 'file'}]"
+            elif raw_msg.stickerMessage.ListFields():
                 text = "[Sticker]"
-            elif msg.Message.contactMessage.ListFields():
-                text = f"[Contact: {msg.Message.contactMessage.displayName}]"
-            elif msg.Message.locationMessage.ListFields():
+            elif raw_msg.contactMessage.ListFields():
+                text = f"[Contact: {raw_msg.contactMessage.displayName}]"
+            elif raw_msg.locationMessage.ListFields():
                 text = "[Location]"
+            elif raw_msg.pollCreationMessage.ListFields() or raw_msg.pollCreationMessageV3.ListFields():
+                text = "[Poll]"
             else:
-                text = "[Unsupported Message]"
+                # Ignore unknown internal protocol frames during initial history sync
+                return None
 
         info = msg.Info
         source = info.MessageSource
         chat_jid = Jid2String(source.Chat)
         sender_jid = Jid2String(source.Sender)
         sender_name = info.Pushname or source.Sender.User
-        timestamp = int(info.Timestamp) if info.Timestamp else int(time.time())
+        timestamp = normalize_timestamp(info.Timestamp)
 
         return ChatMessage(
             id=info.ID,

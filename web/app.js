@@ -333,8 +333,11 @@ window.switchPairTab = function(tabName) {
 // Utilities
 function formatTime(ts) {
   if (!ts) return '';
-  const d = new Date(ts * 1000);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const num = Number(ts);
+  if (isNaN(num) || num <= 0) return '';
+  const ms = num > 1e11 ? num : num * 1000;
+  const d = new Date(ms);
+  return isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 function escapeHtml(str) {
